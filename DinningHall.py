@@ -1,42 +1,45 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+import random
 import threading
 
-class DinningHall(BaseHTTPRequestHandler):
+import requests
+from flask import Flask, request
 
-    def _send_response(self, message):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(bytes(message, "utf8"))
+from settings import DINNING_HALL_PORT, KITCHEN_PORT, Task
 
-    def do_GET(self):
-        if self.path == '/produce':
-            # Produce data on multiple threads
-            threads = []
-            for i in range(5):
-                t = threading.Thread(target=self.produce_data)
-                t.start()
-                threads.append(t)
-            for t in threads:
-                t.join()
-            self._send_response('Data produced')
-        else:
-            self._send_response('Invalid request')
+flask_app = Flask(__name__)
+FAIL = '\033[91m'
+ENDC = '\033[0m'
+NR_OF_WORKERS = 6
 
-    def produce_data(self):
-        # Produce data and send to Server 2
-        data = ...
-        self.send_to_server2(data)
+@flask_app.route('/DinningHall', methods=['POST'])
+def DinningHall():
+    destination = request.get_json()
+    task = Task.dict2task(destination)
+    print(f'{FAIL}Dinning hall : Received {task} from Kitchen{ENDC}')
+    return {'status_code': 200}
 
-    def send_to_server2(self, data):
-        # Send data to Server 2 over HTTP
-        conn = http.client.HTTPConnection('server2:8000')
-        conn.request("POST", "/consume", json.dumps(data))
+class Worker(threading.Thread):
+    def run(self):
+        while True:
+            task = Task(destination='Kitchen')
+            requests.post(
+                f'http://localhost:{KITCHEN_PORT}/Kitchen', json=task.task2dict())
+            
+            time.sleep(random.choice([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]))
 
 def run():
-    server_address = ('0.0.0.0', 8000)
-    httpd = HTTPServer(server_address, DinningHall)
-    print('Starting producer server...')
-    httpd.serve_forever()
+    threads: list[threading.Thread] = []
+
+    server_thread = threading.Thread(target=lambda: flask_app.run(
+        port=DINNING_HALL_PORT, debug=False, use_reloader=False))
+    threads.append(server_thread)
+
+    for _ in range(NR_OF_WORKERS):
+        threads.append(Worker())
+
+    for thread in threads:
+        thread.start()
+
 
 run()
